@@ -999,6 +999,8 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: d8d219d53093e1e42a079bc5b9dbb65f, type: 3}
   m_Name: 
   m_EditorClassIdentifier: Assembly-CSharp::Feryl
+  pivot: {fileID: 2096015924}
+  camera: {fileID: 330585543}
 --- !u!1 &2096015924
 GameObject:
   m_ObjectHideFlags: 0

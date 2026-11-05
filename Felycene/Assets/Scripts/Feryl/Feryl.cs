@@ -30,13 +30,17 @@ public class Feryl : MonoBehaviour
 
 
     // camera
+    [SerializeField]
     GameObject pivot; // the pivot the camera works around, gameObject so it has position
+    [SerializeField]
     GameObject camera; // the main camera for Feryl
-    float dragRadius = 3; // how far the camera's pivot can be from Feryl before it starts getting dragged
+    float dragRadius = 1.5f; // how far the camera's pivot can be from Feryl before it starts getting dragged
     float targetHeight = 1.5f; // how high above Feryl's position the pivot should try to be
+    float pivotAcceleration = .005f; // the pivots acceleration as it moves towards the player if not dragged
     // the camera will always be -camTarget * camDistance from the pivot (or shorter, if colliding)
     Vector3 camTarget = Vector3.forward; // the target that the camera is looking at, normalized
     float camDistance = 5f; // how far the camera should be from the pivot
+    float camCurrentDistance = 5f; // how far the camera currently is from the pivot (if modified to ensure smooth zooming out)
     bool frozen = false; // if true, the camera won't move at all
     bool cameraFollowing = false; // if the camera is following an object
     GameObject followObject = null; // the object the camera is following, reset to null **note change this type to one that has camera position in the parent class** 
@@ -83,11 +87,6 @@ public class Feryl : MonoBehaviour
         // getting the character controller component
         controller = GetComponent<CharacterController>();
 
-        // getting the camera and pivot
-        pivot = GameObject.Find("FerylPivot");
-        camera = GameObject.Find("FerylCamera");
-        
-
         // setting the InputActions to their inputs
         move = InputSystem.actions.FindAction("Move");
         look = InputSystem.actions.FindAction("Look");
@@ -102,9 +101,11 @@ public class Feryl : MonoBehaviour
     }
 
     // Update is called once per frame
-    void Update() { // *note* change this to fixed update
+    void Update() { // *note* change this to fixed update and update all the move_towards
         
         //print("fps = " + 1/Time.deltaTime);
+
+        updateCamera();
         
         // handles all movement
         movement(controller.isGrounded);
@@ -116,7 +117,40 @@ public class Feryl : MonoBehaviour
         controller.Move(totalVelocity*Time.deltaTime);
         //print(totalVelocity);
 
+        updatePivot(false); // reducing jitteryness
+    }
 
+    void updatePivot(bool move=true){
+        // updates the pivot, called at the beginning and end of every frame
+        if (pivot.transform.position.y-targetHeight>transform.position.y){ // ensuring the pivot can't be dragged down by the player
+            pivot.transform.position = new(pivot.transform.position.x, transform.position.y + targetHeight, pivot.transform.position.z);
+        }
+
+        Vector3 diff = pivot.transform.position - Vector3.up*targetHeight - transform.position; // getting the diff in position between pivot & Feryl
+        if (diff.magnitude > dragRadius){ // if the pivot is too far away
+            pivot.transform.position = diff.normalized * dragRadius + Vector3.up*targetHeight + transform.position; // updating position
+        } else if (move){ // if it should slowly go back to centered on the player, yes for start of frame, no for end **change to yes for fixed update, no for update**
+            pivot.transform.position = Vector3.MoveTowards(pivot.transform.position, Vector3.up*targetHeight + transform.position, pivotAcceleration);
+        }
+    }
+
+    void updateCamera(){
+        if (frozen){
+            return;
+        }
+
+        // updating the pivot
+        updatePivot();
+
+        // apply mouse input to camera rotation
+
+
+
+        // check if you are following an object, lerp camera rotation to that object
+
+
+
+        // check for collisions and adjust distance
     }
 
     void movement(bool grounded) {
