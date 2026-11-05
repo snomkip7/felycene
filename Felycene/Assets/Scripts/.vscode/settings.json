@@ -1,0 +1,8 @@
+{
+    "csharp.format.enable": false,
+    "razor.devmode": true,
+    "razor.format.enable": true,
+    "editor.formatOnType": false,
+    "csharp.inlayHints.enableInlayHintsForTypes": true,
+    "dotnet.inlayHints.enableInlayHintsForLiteralParameters": true
+}

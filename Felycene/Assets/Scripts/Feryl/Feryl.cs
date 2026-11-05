@@ -1,6 +1,8 @@
+using Unity.VisualScripting;
 using UnityEngine;
 using UnityEngine.InputSystem;
 using UnityEngine.Scripting.APIUpdating;
+using UnityEngine.SceneManagement;
 
 public class Feryl : MonoBehaviour
 {
@@ -26,6 +28,19 @@ public class Feryl : MonoBehaviour
 
     // upgrades
 
+
+    // camera
+    GameObject pivot; // the pivot the camera works around, gameObject so it has position
+    GameObject camera; // the main camera for Feryl
+    float dragRadius = 3; // how far the camera's pivot can be from Feryl before it starts getting dragged
+    float targetHeight = 1.5f; // how high above Feryl's position the pivot should try to be
+    // the camera will always be -camTarget * camDistance from the pivot (or shorter, if colliding)
+    Vector3 camTarget = Vector3.forward; // the target that the camera is looking at, normalized
+    float camDistance = 5f; // how far the camera should be from the pivot
+    bool frozen = false; // if true, the camera won't move at all
+    bool cameraFollowing = false; // if the camera is following an object
+    GameObject followObject = null; // the object the camera is following, reset to null **note change this type to one that has camera position in the parent class** 
+
     // movement
     Vector3 direction = Vector3.forward; // (normalized) most recent direction the player has pressed
     Vector3 moveVelocity = Vector3.zero; // the current walking velocity of the player
@@ -42,15 +57,20 @@ public class Feryl : MonoBehaviour
     float jumpLengthTimer = 0; // the current timer for the player holding jump to go up
     bool holdingJump = true; // if the player is currently holding jump to higher
     float jumpStopStrength = 2; // y velocity is divided by this number upon stopping holding jump
+    bool jumpOverride = false; // if the player preinputs jump while not able to jump
+
     // dashing
     bool dashing = false;
     float dashSpeed = 15; // speed the player moves during a dash
     float dashCooldown = .7f; // cooldown inbetween dashes
     float dashCooldownTimer = 0; // the timer for cooldowns between dashes
-    float dashLength = .5f; // how long a dash lasts
+    float dashLength = .25f; // how long a dash lasts
     float dashTimer = 0; // timer that tracks how long a dash lasts
     bool sprinting = false; // if the player is sprinting
     float sprintSpeed = 11; // the speed the player moves while sprinting
+    float sprintRecoveryTime = .3f; // cooldown before dashing after ending sprint
+    bool dashReleased = false; // if the player released the dash key
+    bool dashOverride = false; // if the player preinputs dash while not able to dash
 
 
     // Start is called once before the first execution of Update after the MonoBehaviour is created
@@ -62,6 +82,11 @@ public class Feryl : MonoBehaviour
 
         // getting the character controller component
         controller = GetComponent<CharacterController>();
+
+        // getting the camera and pivot
+        pivot = GameObject.Find("FerylPivot");
+        camera = GameObject.Find("FerylCamera");
+        
 
         // setting the InputActions to their inputs
         move = InputSystem.actions.FindAction("Move");
@@ -77,7 +102,7 @@ public class Feryl : MonoBehaviour
     }
 
     // Update is called once per frame
-    void Update() {
+    void Update() { // *note* change this to fixed update
         
         //print("fps = " + 1/Time.deltaTime);
         
@@ -95,84 +120,169 @@ public class Feryl : MonoBehaviour
     }
 
     void movement(bool grounded) {
+        if (dashPhysics()){ // if dash physics instead of walking physics
+            return;
+        }
+        // ***add in the button overrides to allow players to preinput buttons while not able to input them***
+        if (grounded) {
+            groundMovement();
+        } else{ // in the air
+            airMovement();
+        }
+        
+    }
+
+    bool dashPhysics(){ // returns true if player shouldn't calculate other movement, false if it should
         // ~Dashing
-        if (dashCooldownTimer == 0 && !dashing && dash.triggered && dash.IsPressed()){ // starting the dash
+        if (!dashing && !sprinting && dashCooldownTimer <= 0 && ((dash.triggered && dash.IsPressed()) || dashOverride)){ // starting a new dash
+
+            // allowing direction change at the very start of the dash
             Vector3 moveInput = new(move.ReadValue<Vector2>().x, 0, move.ReadValue<Vector2>().y);
             // setting the direction based on the movement being input
             if (moveInput != Vector3.zero){ // making sure direction isn't updated for no reason
                 direction = moveInput.normalized; // setting it to the normalized input
             }
 
-            dashing = true;
+            dashing = true; // the dash is started
+
+            // setting the movement which shouldn't be changed (unless in the air)
+            moveVelocity = direction*dashSpeed+Vector3.up*moveVelocity.y;
+
+            dashCooldownTimer = dashCooldown;
+            dashTimer = dashLength;
+
+            dashOverride = false;
+            dashReleased = false;
+            holdingJump = false; // so you cant keep jumping
+            
+
+
             // ****finish after starting the camera, also change direction with camera****
+        } else if (dashCooldown > 0){ // if mid-dash and or on cooldown
+            dashCooldownTimer -= Time.deltaTime;
+            dashTimer -= Time.deltaTime;
+
+            if (!dash.IsPressed()){ // if the player lets go of dash, dashReleased is true
+                dashReleased = true;
+            }
+
+
+            // if the dash ends (dashtimer<0)
+            if (dashTimer <= 0 && dashing && !sprinting){
+                dashing = false;
+                if (!dashReleased){ // player is holding dash and hasn't let go
+                    sprinting = true;
+                } else{
+                    // setting movement to walk speed
+                    moveVelocity = direction*walkSpeed+Vector3.up*moveVelocity.y;
+                }
+            }
         }
 
-        // ~Walking/Direction
-        if (grounded) { // can't change direction in mid air
+        if (sprinting && !dashReleased){ // keep sprinting
+            // **allow for changing direction during sprint but give it a cooldown and stuff
+            // // converting the movement info (vector2) to a vector3 (y velocity = 0)
+            // Vector3 moveInput = new(move.ReadValue<Vector2>().x, 0, move.ReadValue<Vector2>().y);
 
-            // converting the movement info (veector2) to a vector3 (y velocity = 0)
-            Vector3 moveInput = new(move.ReadValue<Vector2>().x, 0, move.ReadValue<Vector2>().y);
-            // setting the direction based on the movement being input
-            if (moveInput != Vector3.zero){ // making sure direction isn't updated for no reason
-                direction = moveInput.normalized; // setting it to the normalized input
-            }
+            // // letting the player change direction mid sprint
+            // // setting the direction based on the movement being input
+            // if (moveInput != Vector3.zero){ // making sure direction isn't updated for no reason
+            //     direction = moveInput.normalized; // setting it to the normalized input
+            // }
             
             // using moveTowards and acceleration to modify moveVelocity based on movement being input
             // also adds the y velocity so it isn't modified by this function
-            moveVelocity = Vector3.MoveTowards(moveVelocity, moveInput.normalized*walkSpeed+Vector3.up*moveVelocity.y, acceleration);
+            moveVelocity = Vector3.MoveTowards(moveVelocity, direction*sprintSpeed+Vector3.up*moveVelocity.y, acceleration);
 
+        } else if (sprinting){ // stop sprinting
+            sprinting = false;
+            dashCooldown = sprintRecoveryTime; // so you can't dash instantly after
+        }
+        
+        if (dash.triggered && dash.IsPressed() && dashReleased && dashCooldownTimer > 0){ // pressing dash while dashing or on cooldown
+            dashOverride = true; // *check if this works*
+        }
+
+        if ((dashing || sprinting) && !holdingJump){ // avoiding double using this
+            adjustVertical(); // vertical movement stuff -- not affected by dashing
+        }
+
+        return dashing || sprinting; // if dashing or sprinting, don't let the player walk
+    }
+
+    void groundMovement(){
+        // ~Walking/Direction
+        // converting the movement info (veector2) to a vector3 (y velocity = 0)
+        Vector3 moveInput = new(move.ReadValue<Vector2>().x, 0, move.ReadValue<Vector2>().y);
+        // setting the direction based on the movement being input
+        if (moveInput != Vector3.zero){ // making sure direction isn't updated for no reason
+            direction = moveInput.normalized; // setting it to the normalized input
+        }
+        
+        // using moveTowards and acceleration to modify moveVelocity based on movement being input
+        // also adds the y velocity so it isn't modified by this function
+        moveVelocity = Vector3.MoveTowards(moveVelocity, moveInput.normalized*walkSpeed+Vector3.up*moveVelocity.y, acceleration);
+
+        adjustVertical();
+
+        // ~Jumping
+        if (jump.triggered && jump.IsPressed()){ // checking if jump was pressed while the jump action is triggered
+            moveVelocity.y = jumpStrength;
+            holdingJump = true;
+            jumpLengthTimer = maxJumpLength;
+        }
+    }
+
+    void airMovement(){
+        // // adding gravity // moved to doing this only when not holding jump
+        // moveVelocity.y += gravity * Time.deltaTime;
+
+
+        // walk direction change possible in air, not whole player direction though
+        Vector3 moveInput = new(move.ReadValue<Vector2>().x, 0, move.ReadValue<Vector2>().y);
+        // using air acceleration
+        moveVelocity = Vector3.MoveTowards(moveVelocity, moveInput.normalized*airWalkSpeed+Vector3.up*moveVelocity.y, airAcceleration);
+
+
+        // ~Jumping in air
+        if (holdingJump){ // if last checked as holding jump
+            if (jump.IsPressed()){
+                print("holding jump");
+                jumpLengthTimer -= Time.deltaTime;
+                if (jumpLengthTimer <= 0) { // timer ran out
+                    // moveVelocity.y /= jumpStopStrength; // initial slowing to stop/limit vertical ascending
+                    holdingJump = false;
+                } else{
+                    // removed for smoother jumping
+                    // moveVelocity.y += holdJumpStrength * Time.deltaTime * jumpLengthTimer; // adds holdJumpStrength to the y velocity
+                }
+            } else{ // letting go of jump
+                holdingJump = false;
+                // removed for being unnecessary
+                // moveVelocity.y /= jumpStopStrength; // initial slowing to stop/limit vertical ascending **depracated)
+                // print("let go of jump");
+            }
+        } else{ // adds gravity only after the jump button was let go
+            adjustVertical();
+        }
+    }
+
+    void adjustVertical(){ // adds gravity to the player's vertical velocity or resets it if they are on the ground
+
+        if(controller.isGrounded){
             // resetting downwards movement if on the ground
             if (moveVelocity.y < -1){
                 moveVelocity.y = 0;
             }
-
-            // ~Jumping
-            if (jump.triggered && jump.IsPressed()){ // checking if jump was pressed while the jump action is triggered
-                moveVelocity.y = jumpStrength;
-                holdingJump = true;
-                jumpLengthTimer = maxJumpLength;
-            }
+            return;
         }
 
-        else{ // in the air
+        // adding gravity
+        moveVelocity.y += gravity * Time.deltaTime;
+        // print("falling");
 
-            // // adding gravity // moved to doing this only when not holding jump
-            // moveVelocity.y += gravity * Time.deltaTime;
-
-
-            // walk direction change possible in air, not whole player direction though
-            Vector3 moveInput = new(move.ReadValue<Vector2>().x, 0, move.ReadValue<Vector2>().y);
-            // using air acceleration
-            moveVelocity = Vector3.MoveTowards(moveVelocity, moveInput.normalized*airWalkSpeed+Vector3.up*moveVelocity.y, airAcceleration);
- 
-
-            // ~Jumping in air
-            if (holdingJump){ // if last checked as holding jump
-                if (jump.IsPressed()){
-                    print("holding jump");
-                    jumpLengthTimer -= Time.deltaTime;
-                    if (jumpLengthTimer <= 0) { // timer ran out
-                       // moveVelocity.y /= jumpStopStrength; // initial slowing to stop/limit vertical ascending
-                        holdingJump = false;
-                    } else{
-                        // removed for smoother jumping
-                        // moveVelocity.y += holdJumpStrength * Time.deltaTime * jumpLengthTimer; // adds holdJumpStrength to the y velocity
-                    }
-                } else{ // letting go of jump
-                    holdingJump = false;
-                    // removed for being unnecessary
-                    // moveVelocity.y /= jumpStopStrength; // initial slowing to stop/limit vertical ascending **depracated)
-                    // print("let go of jump");
-                }
-            } else{ // adds gravity only after the jump button was pressed
-                // adding gravity
-                moveVelocity.y += gravity * Time.deltaTime;
-                // print("falling");
-
-                if (moveVelocity.y < maxFallSpeed){ // caps the fall speed at the max fall speed
-                    moveVelocity.y = maxFallSpeed;
-                }
-            }
+        if (moveVelocity.y < maxFallSpeed){ // caps the fall speed at the max fall speed
+            moveVelocity.y = maxFallSpeed;
         }
     }
 
